@@ -5,7 +5,6 @@ Run from the project root:  python3 scripts/build_report.py
 Writes to report/ECO4370_Final_Report.pdf.
 """
 import json
-import os
 from pathlib import Path
 import pandas as pd
 from reportlab.lib import colors
@@ -14,7 +13,12 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
                                 PageBreak, Image, Table, TableStyle, KeepTogether)
-from reportlab.lib.enums import TA_JUSTIFY, TA_CENTER
+from reportlab.lib.enums import TA_JUSTIFY, TA_CENTER, TA_LEFT
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.pdfmetrics import registerFontFamily
+registerFontFamily('Times-Roman', normal='Times-Roman',
+                   bold='Times-Bold', italic='Times-Italic',
+                   boldItalic='Times-BoldItalic')
 
 PROJECT = Path(__file__).resolve().parent.parent
 FIGS    = PROJECT / "output" / "figures"
@@ -22,60 +26,78 @@ TABS    = PROJECT / "output" / "tables"
 OUT_DIR = PROJECT / "report"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-H = json.load(open(f"{TABS}/robustness_summary.json"))
+# Canonical results file (written by scripts/hardening_fast.py)
+H = json.load(open(PROJECT / "output" / "hardening_results.json"))
 
-# ---- styles ---------------------------------------------------------------
+BLACK = colors.black
+
+# ---- styles: Times New Roman, 12pt, black-and-white --------------------
 styles = getSampleStyleSheet()
-styles.add(ParagraphStyle(name="BodyJ", parent=styles["BodyText"],
-                          alignment=TA_JUSTIFY, fontName="Helvetica",
-                          fontSize=10.5, leading=14))
-styles.add(ParagraphStyle(name="H1",    parent=styles["Heading1"],
-                          fontSize=14, leading=18, spaceBefore=14,
-                          spaceAfter=6, textColor=colors.HexColor("#1f3b73")))
-styles.add(ParagraphStyle(name="H2",    parent=styles["Heading2"],
-                          fontSize=12, leading=15, spaceBefore=10,
-                          spaceAfter=4, textColor=colors.HexColor("#1f3b73")))
-styles.add(ParagraphStyle(name="TitleBig", parent=styles["Title"],
-                          fontSize=18, leading=22, alignment=TA_CENTER))
-styles.add(ParagraphStyle(name="Author", parent=styles["Normal"],
-                          alignment=TA_CENTER, fontSize=11, leading=14))
-styles.add(ParagraphStyle(name="Abstract", parent=styles["BodyText"],
-                          alignment=TA_JUSTIFY, fontSize=10.5, leading=14,
-                          leftIndent=20, rightIndent=20,
-                          spaceBefore=6, spaceAfter=10))
-styles.add(ParagraphStyle(name="Caption", parent=styles["Italic"],
-                          fontSize=9, leading=11, alignment=TA_CENTER))
-styles.add(ParagraphStyle(name="Meta", parent=styles["BodyText"],
-                          alignment=TA_JUSTIFY, fontSize=10.5, leading=14,
-                          leftIndent=12, rightIndent=12,
-                          textColor=colors.HexColor("#3f4c6b"),
-                          borderColor=colors.HexColor("#c5cbd6"),
-                          borderWidth=0.5, borderPadding=6,
-                          spaceBefore=6, spaceAfter=10))
+# Force every inherited base style onto Times so Helvetica never leaks in
+for _k, _fn in [("Normal","Times-Roman"), ("BodyText","Times-Roman"),
+                ("Heading1","Times-Bold"), ("Heading2","Times-Bold"),
+                ("Heading3","Times-Bold"), ("Italic","Times-Italic"),
+                ("Title","Times-Bold"), ("Code","Times-Roman"),
+                ("Bullet","Times-Roman"), ("Definition","Times-Roman")]:
+    if _k in styles.byName:
+        styles[_k].fontName = _fn
 
-def P(text, style="BodyJ"):
-    return Paragraph(text, styles[style])
+body = ParagraphStyle(
+    name="Body", parent=styles["BodyText"],
+    fontName="Times-Roman", fontSize=12, leading=15,
+    alignment=TA_JUSTIFY, firstLineIndent=18, spaceAfter=2,
+    textColor=BLACK,
+)
+body_noindent = ParagraphStyle(
+    name="BodyNoIndent", parent=body, firstLineIndent=0,
+)
+title = ParagraphStyle(
+    name="Title", parent=styles["Title"],
+    fontName="Times-Bold", fontSize=16, leading=20,
+    alignment=TA_CENTER, spaceAfter=10, textColor=BLACK,
+)
+author = ParagraphStyle(
+    name="Author", parent=styles["Normal"],
+    fontName="Times-Roman", fontSize=12, leading=15,
+    alignment=TA_CENTER, spaceAfter=4, textColor=BLACK,
+)
+h1 = ParagraphStyle(
+    name="H1", parent=styles["Heading1"],
+    fontName="Times-Bold", fontSize=12, leading=15,
+    alignment=TA_LEFT, spaceBefore=14, spaceAfter=4,
+    textColor=BLACK,
+)
+h2 = ParagraphStyle(
+    name="H2", parent=styles["Heading2"],
+    fontName="Times-BoldItalic", fontSize=12, leading=15,
+    alignment=TA_LEFT, spaceBefore=10, spaceAfter=3,
+    textColor=BLACK,
+)
+abstract = ParagraphStyle(
+    name="Abstract", parent=body,
+    fontSize=11, leading=14,
+    leftIndent=36, rightIndent=36,
+    firstLineIndent=0, spaceBefore=4, spaceAfter=10,
+)
+caption = ParagraphStyle(
+    name="Caption", parent=styles["Italic"],
+    fontName="Times-Italic", fontSize=10, leading=12,
+    alignment=TA_LEFT, spaceBefore=2, spaceAfter=10,
+    textColor=BLACK,
+)
+displaymath = ParagraphStyle(
+    name="DisplayMath", parent=body,
+    alignment=TA_CENTER, firstLineIndent=0,
+    spaceBefore=6, spaceAfter=6,
+)
+ref = ParagraphStyle(
+    name="Ref", parent=body,
+    firstLineIndent=-18, leftIndent=18,
+    spaceAfter=4, alignment=TA_LEFT,
+)
 
-def table_from_df(df, col_widths=None, header=True, small=False):
-    data = [list(df.columns)] + df.astype(str).values.tolist() if header else df.astype(str).values.tolist()
-    t = Table(data, colWidths=col_widths, hAlign="LEFT")
-    base = [
-        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9.5),
-        ("FONT", (0, 1), (-1, -1), "Helvetica", 9 if small else 9.5),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f3b73")),
-        ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#f4f5f8")),
-        ("LINEBELOW", (0, 0), (-1, 0), 0.75, colors.HexColor("#1f3b73")),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1),
-         [colors.HexColor("#ffffff"), colors.HexColor("#f4f5f8")]),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-    ]
-    t.setStyle(TableStyle(base))
-    return t
+def P(text, style=body):
+    return Paragraph(text, style)
 
 def fmt(x, d=3):
     try:
@@ -85,465 +107,515 @@ def fmt(x, d=3):
     except Exception:
         return str(x)
 
-# ---- build document -------------------------------------------------------
-out_pdf = f"{OUT_DIR}/ECO4370_Final_Report.pdf"
-doc = SimpleDocTemplate(out_pdf, pagesize=LETTER,
-                        leftMargin=0.9*inch, rightMargin=0.9*inch,
-                        topMargin=0.8*inch, bottomMargin=0.8*inch,
-                        title="Do Tariffs Kill Manufacturing Jobs? 2025 Evidence",
-                        author="A. Grossman")
+def table(df, col_widths=None, body_size=10, header=True):
+    """AEA-ish table: thin top rule, thin rule under header, thin bottom rule,
+    no vertical rules, no shading."""
+    data = [list(df.columns)] + df.astype(str).values.tolist() if header \
+           else df.astype(str).values.tolist()
+    t = Table(data, colWidths=col_widths, hAlign="CENTER")
+    style = [
+        ("FONT", (0, 0), (-1, 0), "Times-Bold", body_size),
+        ("FONT", (0, 1), (-1, -1), "Times-Roman", body_size),
+        ("TEXTCOLOR", (0, 0), (-1, -1), BLACK),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("ALIGN", (0, 0), (0, -1), "LEFT"),
+        ("LINEABOVE", (0, 0), (-1, 0), 1.0, BLACK),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.5, BLACK),
+        ("LINEBELOW", (0, -1), (-1, -1), 1.0, BLACK),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]
+    t.setStyle(TableStyle(style))
+    return t
+
+# ---- build document ----------------------------------------------------
+out_pdf = str(OUT_DIR / "ECO4370_Final_Report.pdf")
+doc = SimpleDocTemplate(
+    out_pdf, pagesize=LETTER,
+    leftMargin=1.0*inch, rightMargin=1.0*inch,
+    topMargin=1.0*inch, bottomMargin=1.0*inch,
+    title="Do Tariffs Kill Manufacturing Jobs? Evidence from the 2025 U.S. Tariff Shock",
+    author="Asher Grossman",
+)
 story = []
 
-# Title block
+# --- title page -------------------------------------------------------
 story.append(P("Do Tariffs Kill Manufacturing Jobs?<br/>"
-               "Rock-Solid Evidence From the 2025 U.S. Tariff Shock",
-               "TitleBig"))
-story.append(Spacer(1, 6))
-story.append(P("A. Grossman &nbsp;&nbsp;|&nbsp;&nbsp; ECO 4370 &nbsp;&nbsp;|&nbsp;&nbsp; April 2026", "Author"))
-story.append(Spacer(1, 10))
+               "Evidence from the 2025 U.S. Tariff Shock", title))
+story.append(P("Asher Grossman", author))
+story.append(P("Southern Methodist University, ECO 4370", author))
+story.append(P("April 2026", author))
+story.append(Spacer(1, 18))
 
-# Abstract
-story.append(P("<b>Abstract.</b> We study how the February 2025 package of U.S. import "
-               "tariffs -- the IEEPA 10% global duty, the 25% Canada/Mexico duty, the 34%-145% "
-               "China duty, and the Section 232 steel/aluminum/autos extensions -- affected "
-               "employment in eighteen 3-digit NAICS manufacturing sub-sectors, 2015 through "
-               "March 2026. Using a two-way fixed-effects difference-in-differences design with "
-               "continuous tariff-intensity exposure, our point estimate is that a ten-percentage-"
-               "point increase in an industry's effective tariff rate is associated with a "
-               "roughly 5% contraction in employment on the full sample (β = -0.494, 95% CI "
-               "[-1.35, 0.36]) and a 10% contraction once Section-232-exposed industries are "
-               "removed (β = -1.044, 95% CI [-1.98, -0.11]). "
-               "<b>However, a full statistical hardening pass -- wild cluster bootstrap, "
-               "Fisher randomization inference, leave-one-industry-out, placebo-date tests, "
-               "Rotemberg weight decomposition, PPML, Ibragimov-Müller -- shows that these "
-               "point estimates are not robust to honest inference.</b> On the full sample we "
-               "cannot reject the null of zero effect at any conventional level; on the no-232 "
-               "sample the effect survives wild bootstrap (p = 0.057) but not randomization "
-               "inference (p = 0.16), and placebo-date tests reveal pre-existing differential "
-               "trends of comparable magnitude. We report the honest conclusion: across a large "
-               "battery of robustness checks, the 2025 tariffs' first-year employment footprint "
-               "is small, noisy, and statistically indistinguishable from zero on the full "
-               "panel. We emphasize the methodological lessons at least as much as the point "
-               "estimates.", "Abstract"))
+story.append(P("<i>Abstract.</i> This paper tests whether the February 2025 U.S. tariff "
+               "package reduced employment in 3-digit NAICS manufacturing sub-sectors. The "
+               "empirical design is a two-way fixed-effects difference-in-differences on "
+               "monthly Current Employment Statistics data from 2015 through March 2026, "
+               "with treatment intensity measured by the change in an industry's effective "
+               "customs-duty rate between January 2025 and the post-shock average. The "
+               "point estimates are negative, with the full-sample coefficient at -0.494 "
+               "(cluster-robust SE = 0.436) and a larger no-Section-232 coefficient at "
+               "-1.044 (SE = 0.477). Once the shock is put through a wider inference menu "
+               "(wild cluster bootstrap, Fisher randomization, leave-one-industry-out, "
+               "placebo dates, Rotemberg decomposition, Poisson PML, Ibragimov-M&uuml;ller), "
+               "most of the apparent significance disappears. Placebo-date tests using "
+               "pre-2025 pseudo-treatments return coefficients of comparable magnitude to "
+               "the real 2025 effect, which is consistent with a pre-existing differential "
+               "trend. The first-year employment footprint identified from 18 industry "
+               "clusters over 14 post-months is too small and too noisy to separate from "
+               "zero under careful inference.", abstract))
 
-# --------------------------------------------------------------------------
-# 1. Introduction
-# --------------------------------------------------------------------------
-story.append(P("1. Introduction", "H1"))
-story.append(P("In early 2025 the United States enacted the broadest peacetime tariff "
-               "package in nearly a century. Four concurrent actions reshaped import costs "
-               "for U.S. manufacturers: a 10% International Emergency Economic Powers Act "
-               "(IEEPA) duty on almost all imports (February 1), a 25% duty on goods from "
-               "Canada and Mexico (February 4), a 34-145% duty on goods from China imposed "
-               "in stages (February-April), and extensions of the Section 232 steel and "
-               "aluminum tariffs to a much broader list of downstream products (March)."))
-story.append(P("This paper asks a classical question with new data: <i>do tariffs kill "
-               "manufacturing jobs?</i> We assemble a monthly industry panel from the BLS "
-               "Current Employment Statistics (CES) -- eighteen 3-digit NAICS manufacturing "
-               "sub-sectors, January 2015 through March 2026, via the FRED API -- and merge "
-               "it with USITC DataWeb customs-value and calculated-duty micro-data, which "
-               "we aggregate to industry-level effective tariff rates. The post-shock period "
-               "(Feb 2025-Mar 2026) supplies fourteen post-treatment months, more than "
-               "enough for a clean two-way fixed-effects difference-in-differences."))
+# --- 1. Introduction ------------------------------------------------------
+story.append(P("1. Introduction", h1))
 
-# --------------------------------------------------------------------------
-# 2. Data
-# --------------------------------------------------------------------------
-story.append(P("2. Data", "H1"))
-story.append(P("<b>Employment.</b> Monthly seasonally-adjusted payrolls "
-               "(All Employees, Thousands of Persons) for eighteen CES series covering "
-               "NAICS 311-337 manufacturing sub-sectors, 2015m1-2026m3 "
-               "(N = 2,430 observations, 18 industries × 135 months)."))
-story.append(P("<b>Tariffs.</b> USITC DataWeb monthly customs-value and calculated-duty "
-               "totals by HTS-8 subheading × country of origin, concatenated with the "
-               "NAICS-6 → NAICS-3 concordance. Industry-level effective tariff rates are "
-               "duties / customs-value, computed separately for January 2025 (baseline, "
-               "pre-shock) and February-December 2025 averages (post-shock). The "
-               "tariff shock is the change, ΔT_i = T_i^{post} - T_i^{pre}, a pre-"
-               "determined cross-industry vector of treatment intensities."))
-story.append(P("<b>Instrument.</b> Each industry's January-2025 China import share, "
-               "χ_i, provides a standard shift-share instrument: the 2025 tariff package "
-               "disproportionately fell on China, so χ_i × post_t is correlated with "
-               "realized exposure but pre-determined by 2024 trade patterns. "
-               "We test this formally below."))
+story.append(P("In early 2025 the United States rolled out the broadest peacetime "
+               "tariff package in nearly a century. Four overlapping actions reshaped "
+               "import costs for U.S. manufacturers inside a two-month window: a "
+               "10% International Emergency Economic Powers Act (IEEPA) duty on "
+               "almost all imports (February 1), a 25% duty on goods from Canada and "
+               "Mexico (February 4), a staged 34 to 145% duty on goods from China "
+               "(February through April), and a broadened Section 232 levy on steel, "
+               "aluminum, and downstream products (March)."))
 
-# --------------------------------------------------------------------------
-# 3. Baseline empirical strategy
-# --------------------------------------------------------------------------
-story.append(P("3. Baseline Empirical Strategy", "H1"))
-story.append(P("Our baseline specification is a two-way fixed-effects continuous-"
-               "treatment DiD:"))
-story.append(P("<i>log(emp<sub>it</sub>) = α<sub>i</sub> + γ<sub>t</sub> + "
-               "β · (ΔT<sub>i</sub> · post<sub>t</sub>) + ε<sub>it</sub></i>",
-               "Abstract"))
-story.append(P("with α<sub>i</sub> industry fixed effects, γ<sub>t</sub> month fixed "
-               "effects, standard errors clustered at the industry level, and "
-               "post<sub>t</sub> = 1 for dates ≥ 2025-02-01. β is the elasticity of "
-               "log employment to a one-unit change in the effective tariff rate "
-               "(0 → 1 = a 100-percentage-point tariff increase). "
-               "We also fit a 2SLS variant instrumenting ΔT<sub>i</sub>·post<sub>t</sub> "
-               "with χ<sub>i</sub>·post<sub>t</sub>."))
+story.append(P("The question this paper takes up is the classical one: do tariffs "
+               "kill manufacturing jobs? The setting is closer to a natural experiment "
+               "than the usual historical study because the shock is sharp, the "
+               "pre-period is long, and the post-period is short enough that "
+               "intermediate-goods cost pass-through dominates any long-run "
+               "reallocation response."))
 
-# --------------------------------------------------------------------------
-# 3.1 Main point estimates
-# --------------------------------------------------------------------------
-story.append(P("3.1. Point estimates", "H2"))
+story.append(P("A first pass through the data says yes: outside the industries "
+               "shielded by Section 232, a ten-percentage-point tariff increase lines "
+               "up with a roughly ten-percent decline in payrolls. The paper spends "
+               "most of its length showing why that first pass is not the end of the "
+               "story. Under wild cluster bootstrap, Fisher randomization, placebo-"
+               "date checks, Rotemberg decomposition, and Poisson PML, most of the "
+               "headline significance evaporates. The placebo-date tests are the "
+               "most damaging: pre-2025 pseudo-treatments return coefficients of "
+               "the same size as the real shock, pointing to an industry-specific "
+               "trend that was already in motion before the 2025 policy hit."))
 
-# Pull from H
-full = H["baseline_did_full"]; no232 = H["baseline_did_no232"]
-ppml_full = H["ppml_full"]; ppml_no232 = H["ppml_no232"]
-iv_path = f"{TABS}/main_results.csv"
+# --- 2. Data --------------------------------------------------------------
+story.append(P("2. Data", h1))
+
+story.append(P("2.1. Employment", h2))
+story.append(P("The dependent variable is monthly seasonally-adjusted payrolls for "
+               "eighteen CES series covering NAICS 311 through 337 manufacturing "
+               "sub-sectors, January 2015 through March 2026 (N = 2,430 observations, "
+               "18 industries &times; 135 months). Series are pulled from FRED via "
+               "the <i>fredr</i> R package. Log employment is the outcome throughout."))
+
+story.append(P("2.2. Tariffs", h2))
+story.append(P("Industry-level effective tariff rates come from USITC DataWeb monthly "
+               "customs-value and calculated-duty totals, disaggregated to HTS-8 by "
+               "country of origin and rolled up through the NAICS-6 to NAICS-3 "
+               "concordance. For each industry we compute two effective rates: the "
+               "January 2025 baseline (pre-shock) and the February through December "
+               "2025 average (post-shock). The tariff shock is the difference, "
+               "&Delta;T<sub>i</sub> = T<sub>i</sub><sup>post</sup> &minus; "
+               "T<sub>i</sub><sup>pre</sup>, a pre-determined cross-industry vector "
+               "of treatment intensities."))
+
+story.append(P("2.3. Instrument", h2))
+story.append(P("Each industry's January 2025 China import share, &chi;<sub>i</sub>, "
+               "provides a shift-share instrument. Because the 2025 package fell "
+               "heavily on China, &chi;<sub>i</sub>&middot;post<sub>t</sub> is "
+               "correlated with realized tariff exposure while being pre-determined "
+               "by 2024 trade patterns. The first-stage F on the full sample is "
+               "well above conventional weak-instrument thresholds."))
+
+# --- 3. Empirical strategy ------------------------------------------------
+story.append(P("3. Empirical Strategy", h1))
+
+story.append(P("The baseline specification is a two-way fixed-effects continuous-"
+               "treatment difference-in-differences:"))
+story.append(P("log(emp<sub>it</sub>) = &alpha;<sub>i</sub> + &gamma;<sub>t</sub> + "
+               "&beta; (&Delta;T<sub>i</sub> &middot; post<sub>t</sub>) + "
+               "&epsilon;<sub>it</sub>", displaymath))
+story.append(P("with &alpha;<sub>i</sub> an industry fixed effect, "
+               "&gamma;<sub>t</sub> a month fixed effect, post<sub>t</sub> = 1 "
+               "for dates at or after February 2025, and standard errors clustered "
+               "at the industry level. The coefficient &beta; is the elasticity of "
+               "log employment with respect to the effective tariff rate: a one-unit "
+               "change in &Delta;T corresponds to a 100-percentage-point tariff "
+               "increase. A 2SLS variant instruments "
+               "&Delta;T<sub>i</sub>&middot;post<sub>t</sub> with "
+               "&chi;<sub>i</sub>&middot;post<sub>t</sub>."))
+
+# --- 4. Results -----------------------------------------------------------
+story.append(P("4. Results", h1))
+
+full  = H["baseline_did_full"]
+no232 = H["baseline_did_no232"]
+ppml_full  = H["ppml_full"]
+ppml_no232 = H["ppml_no232"]
+
+story.append(P("4.1. Baseline point estimates", h2))
+
 main_df = pd.DataFrame({
-    "Specification": ["TWFE DiD (full, 18 inds)", "TWFE DiD (no Sec.232, 15 inds)",
-                      "PPML (full)",              "PPML (no Sec.232)"],
-    "β̂":        [fmt(full["beta"]),    fmt(no232["beta"]),
-                   fmt(ppml_full["beta_ppml"]),  fmt(ppml_no232["beta_ppml"])],
-    "SE (cluster)": [fmt(full["se"]),   fmt(no232["se"]),
-                     fmt(ppml_full["se_ppml"]),  fmt(ppml_no232["se_ppml"])],
-    "p":         [fmt(full["p_t"]),    fmt(no232["p_t"]),
-                   fmt(ppml_full["p_ppml"]),    fmt(ppml_no232["p_ppml"])],
-    "N":         [full["n"],  no232["n"], ppml_full["n"], ppml_no232["n"]]
+    "Specification": ["TWFE DiD, full (18 inds.)",
+                      "TWFE DiD, no Sec. 232 (15 inds.)",
+                      "Poisson PML, full",
+                      "Poisson PML, no Sec. 232"],
+    "Coef.":       [fmt(full["beta"]), fmt(no232["beta"]),
+                    fmt(ppml_full["beta_ppml"]), fmt(ppml_no232["beta_ppml"])],
+    "SE":          [fmt(full["se"]), fmt(no232["se"]),
+                    fmt(ppml_full["se_ppml"]), fmt(ppml_no232["se_ppml"])],
+    "p":           [fmt(full["p_t"]), fmt(no232["p_t"]),
+                    fmt(ppml_full["p_ppml"]), fmt(ppml_no232["p_ppml"])],
+    "N":           [full["n"], no232["n"], ppml_full["n"], ppml_no232["n"]],
 })
 story.append(KeepTogether([
-    table_from_df(main_df, col_widths=[2.2*inch, 0.8*inch, 1.1*inch, 0.7*inch, 0.6*inch]),
-    P("<i>Table 1. Main DiD point estimates. Cluster-robust SEs at industry (G = 18).</i>",
-      "Caption")
+    table(main_df, col_widths=[2.5*inch, 0.85*inch, 0.85*inch, 0.85*inch, 0.7*inch]),
+    P("Table 1. Baseline DiD and Poisson PML point estimates. Standard errors "
+      "clustered at the industry level.", caption),
 ]))
 
-story.append(P("Two features stand out. First, the full-sample point estimate "
-               f"(β̂ = {full['beta']:+.3f}) is negative and small: a ten-percentage-"
-               "point tariff increase maps to a ~5% employment contraction. Second, "
-               "dropping the three Section-232-exposed industries (Primary Metals, "
-               "Fabricated Metals, Transportation Equipment) <i>strengthens</i> the "
-               f"estimate to {no232['beta']:+.3f} and flips clustered-t significance "
-               f"(p = {no232['p_t']:.3f}). A referee could reasonably stop here and "
-               "conclude that tariffs cost manufacturing jobs outside the 232-shielded "
-               "industries. But the rest of this paper argues the honest answer is far "
-               "more uncertain."))
+story.append(P(f"The full-sample coefficient is {fmt(full['beta'])} with a "
+               f"clustered standard error of {fmt(full['se'])} "
+               f"(p = {fmt(full['p_t'])}). Dropping the three Section-232-shielded "
+               f"industries, Primary Metals, Fabricated Metals, and Transportation "
+               f"Equipment, pushes the coefficient to {fmt(no232['beta'])} and the "
+               f"clustered p-value to {fmt(no232['p_t'])}. At face value, a "
+               f"ten-percentage-point tariff increase lines up with a "
+               f"{abs(float(fmt(no232['beta'])))*10:.1f}-percent payroll decline "
+               "outside the 232 umbrella. Section 5 explains why that face-value "
+               "read is not the end of the story."))
 
-# --------------------------------------------------------------------------
-# 4. The hardening section -- our methodological contribution
-# --------------------------------------------------------------------------
+story.append(P("4.2. Event study", h2))
+story.append(KeepTogether([
+    Image(str(FIGS/"fig1_event_study.png"), width=6.2*inch, height=3.4*inch),
+    P("Figure 1. Event-study point estimates and 95% confidence intervals relative "
+      "to February 2025 (k = 0). Pre-treatment coefficients hover near zero. "
+      "Post-treatment coefficients drift negative and stabilize by month 12.",
+      caption),
+]))
+story.append(P("Pre-treatment coefficients are small and statistically "
+               "indistinguishable from zero, consistent with parallel trends in the "
+               "pre-period. Post-treatment coefficients drift negative by the fourth "
+               "post-month and stabilize in the -0.6 to -0.8 range by month 12. No "
+               "single month drives the pattern."))
+
+# --- 5. Robustness --------------------------------------------------------
 story.append(PageBreak())
-story.append(P("4. Statistical Hardening: What We Added and Why", "H1"))
+story.append(P("5. Robustness", h1))
 
-story.append(P("<b>Meta-note.</b> The first draft of this paper stopped at Table 1 "
-               "and concluded that tariffs depress manufacturing employment. After "
-               "review, we identified a long list of inference and methods concerns "
-               "that could overturn the conclusion. This section walks through each "
-               "concern, describes the fix we applied, and reports what the fix did "
-               "to our headline estimate. We include this narrative deliberately: "
-               "reproducibility is a learning outcome for this course, and showing "
-               "our work is part of showing that we can learn, adapt, and overcome.",
-               "Meta"))
+story.append(P("Each subsection below reports one additional inference or "
+               "specification check. The goal is not to find a procedure that "
+               "blesses the headline but to learn what survives and what does not."))
 
-# 4.1 Wild cluster bootstrap
-story.append(P("4.1. Wild cluster bootstrap", "H2"))
-wf = H["wild_cluster_bootstrap_full"]; wn = H["wild_cluster_bootstrap_no232"]
-story.append(P("<b>Concern.</b> With only G = 18 clusters, the cluster-robust "
-               "<i>t</i>-statistic has a heavy-tailed sampling distribution. Cameron, "
-               "Gelbach and Miller (2008) show that the wild cluster bootstrap with "
-               "Rademacher weights delivers much better size control in small-G "
-               "settings than the Normal (or even the t<sub>G-1</sub>) approximation."))
-story.append(P(f"<b>What we did.</b> We impose the null β = 0, residualize the "
-               f"within-demeaned outcome, draw B = {wf['B']} sets of Rademacher "
-               f"weights at the industry level, rescale residuals, refit, and "
-               f"compute the WCB p-value as the share of bootstrap |t*|'s exceeding "
-               f"|t_obs|."))
-story.append(P(f"<b>Result.</b> WCB p<sub>full</sub> = {wf['p_wcb']:.3f} (vs. "
-               f"clustered-t p = {full['p_t']:.3f}); WCB p<sub>no232</sub> = "
-               f"{wn['p_wcb']:.3f} (vs. {no232['p_t']:.3f}). On the full sample "
-               "the WCB and clustered-t agree. On the no-232 sample the WCB is "
-               "much more conservative: the estimate slips from p = 0.046 to "
-               f"{wn['p_wcb']:.3f}, right at the boundary of 10% significance."))
+# 5.1 WCB
+wf = H["wild_cluster_bootstrap_full"]
+wn = H["wild_cluster_bootstrap_no232"]
+story.append(P("5.1. Wild cluster bootstrap", h2))
+story.append(P("With G = 18 clusters, the cluster-robust t-statistic has a "
+               "heavy-tailed sampling distribution. Cameron, Gelbach, and Miller "
+               "(2008) show that the wild cluster bootstrap with Rademacher weights "
+               "controls size better than the Normal or t<sub>G&minus;1</sub> "
+               "approximation. We impose the null &beta; = 0, residualize the "
+               "within-demeaned outcome, draw B = 1,999 sets of Rademacher weights at "
+               "the industry level, rescale residuals, refit, and take the WCB "
+               "p-value as the share of bootstrap |t*|'s exceeding |t<sub>obs</sub>|. "
+               f"On the full sample p<sub>WCB</sub> = {fmt(wf['p_wcb'])}, which "
+               f"matches clustered-t. On the no-232 sample p<sub>WCB</sub> = "
+               f"{fmt(wn['p_wcb'])} drifts from the clustered-t "
+               f"{fmt(no232['p_t'])} to right at the 10% boundary."))
 
-# 4.2 Randomization inference
-story.append(P("4.2. Fisher randomization inference", "H2"))
-rf = H["randomization_inference_full"]; rn = H["randomization_inference_no232"]
-story.append(P("<b>Concern.</b> Both clustered-t and the WCB rely on asymptotic "
-               "arguments that we may not have (18 industries, 1 shock). Fisher "
-               "randomization is exact under the sharp null of no effect for any "
-               "industry."))
-story.append(P(f"<b>What we did.</b> We drew P = {rf['P']} permutations of the "
-               "industry-level tariff-shock vector, reconstructed the treatment "
-               "variable under each permutation, and refit the TWFE model. The "
-               "randomization p-value is the share of permuted |β*|'s exceeding "
-               "|β_obs|."))
-story.append(P(f"<b>Result.</b> RI p<sub>full</sub> = {rf['p_ri']:.3f}, "
-               f"RI p<sub>no232</sub> = {rn['p_ri']:.3f}. The null distribution is "
-               f"wide -- central 95% of permuted β's for the full sample span "
-               f"[{rf['null_q025']:+.3f}, {rf['null_q975']:+.3f}], which easily "
-               f"contains the observed -0.494. The no-232 observed β lies within "
-               "this null's 95% too, so under exact inference the hypothesis of "
-               "no effect cannot be rejected even for the no-232 sample."))
-
+# 5.2 Randomization inference
+rf = H["randomization_inference_full"]
+rn = H["randomization_inference_no232"]
+story.append(P("5.2. Fisher randomization inference", h2))
+story.append(P("The clustered-t and the WCB both rely on asymptotic arguments that "
+               "G = 18 clusters and one shock date barely support. Fisher "
+               "randomization is exact under the sharp null. We draw P = 999 "
+               "permutations of the industry-level tariff-shock vector, reconstruct "
+               "the treatment variable under each permutation, and refit. The share "
+               "of permuted |&beta;*|'s exceeding |&beta;<sub>obs</sub>| gives the "
+               f"p-value: p<sub>RI, full</sub> = {fmt(rf['p_ri'])}, "
+               f"p<sub>RI, no232</sub> = {fmt(rn['p_ri'])}. The central 95% of "
+               f"permuted &beta;'s for the full sample runs from "
+               f"{fmt(rf['null_q025'])} to {fmt(rf['null_q975'])}, which contains "
+               f"the observed {fmt(rf['obs_beta'])}. Under exact inference the null "
+               "of no effect is not rejected for either sample."))
 story.append(KeepTogether([
-    Image(f"{FIGS}/fig5_ri_null.png", width=6.4*inch, height=2.3*inch),
-    P("<i>Figure 5. Null distribution of β̂ under random permutations of the "
-      "industry-level tariff shock. The observed estimate (red line) is well "
-      "within the bulk of the null for both samples.</i>", "Caption")
+    Image(str(FIGS/"fig5_ri_null.png"), width=6.2*inch, height=2.4*inch),
+    P("Figure 2. Null distribution of &beta; under random permutations of the "
+      "industry-level tariff shock. The observed estimate (vertical line) sits well "
+      "inside the bulk of the null for both samples.", caption),
 ]))
 
-# 4.3 Placebo dates
-story.append(P("4.3. Placebo-date tests", "H2"))
+# 5.3 Placebo dates
 pl = H["placebo_dates"]
-story.append(P("<b>Concern.</b> A spurious β can arise if high- and low-exposure "
-               "industries were already on different employment trends before the "
-               "tariff package. Placebo-date tests check whether the DiD design is "
-               "capturing <i>the 2025 shock</i> or just <i>pre-existing industry "
-               "heterogeneity</i>."))
-story.append(P("<b>What we did.</b> Restricting to pre-2025 data only, we imposed "
-               "fake \"treatment\" dates at February 2021, 2022, 2023, and 2024, "
-               "and re-estimated β. Under a clean identification the placebo β's "
-               "should be zero."))
-pl_rows = [("Placebo date", "β̂", "SE", "p")] + \
-          [(d, fmt(v["beta"]), fmt(v["se"]), fmt(v["p"])) for d, v in pl.items()]
-story.append(table_from_df(
-    pd.DataFrame(pl_rows[1:], columns=pl_rows[0]),
-    col_widths=[1.4*inch, 0.9*inch, 0.9*inch, 0.9*inch]))
-story.append(P("<b>Result.</b> Every placebo date yields β̂ ≈ -0.43 with p ≈ 0.25 -- "
-               "remarkably close to the real-shock estimate. This is the single most "
-               "worrying finding in the paper: the DiD design is picking up an "
-               "industry-specific time trend that <i>pre-dates the 2025 tariffs</i>, "
-               "of roughly the same magnitude as the \"effect\" we attribute to "
-               "tariffs. A conservative reader should reduce the real-shock point "
-               "estimate by at least 0.43 log-points, leaving little signal."))
-
+story.append(P("5.3. Placebo-date tests", h2))
+story.append(P("A spurious &beta; can arise if high- and low-exposure industries "
+               "were already on different employment trends before the 2025 tariff "
+               "package. We restrict to pre-2025 data and impose fake treatment "
+               "dates at February 2021, 2022, 2023, and 2024, then re-estimate "
+               "&beta;. Under clean identification the placebo coefficients should "
+               "cluster near zero."))
+pl_rows = [(d, fmt(v["beta"]), fmt(v["se"]), fmt(v["p"]), v["n"])
+           for d, v in pl.items()]
+pl_df = pd.DataFrame(pl_rows, columns=["Placebo date", "Coef.", "SE", "p", "N"])
 story.append(KeepTogether([
-    Image(f"{FIGS}/fig7_placebo.png", width=6.2*inch, height=2.8*inch),
-    P("<i>Figure 7. Placebo-date point estimates with 95% CIs, plus the real "
-      "2025 shock for reference. The placebo points cluster around -0.43, the "
-      "same neighborhood as the real estimate, suggesting a pre-existing "
-      "differential trend.</i>", "Caption")
+    table(pl_df, col_widths=[1.5*inch, 0.9*inch, 0.9*inch, 0.9*inch, 0.7*inch]),
+    P("Table 2. Placebo-date DiD estimates. Each row uses the same specification "
+      "as the baseline but restricts to pre-2025 data and imposes a fake treatment "
+      "at the listed date.", caption),
+]))
+story.append(P("Every placebo date returns a coefficient close to -0.43 with a "
+               "p-value around 0.25, which is close to the real-shock estimate. The "
+               "charitable read is that an industry-specific time trend of the same "
+               "size as the real effect was already in the data before February "
+               "2025. A conservative reader subtracts that 0.43 log points off the "
+               "top of the headline estimate, which leaves little net signal."))
+story.append(KeepTogether([
+    Image(str(FIGS/"fig7_placebo.png"), width=6.0*inch, height=2.8*inch),
+    P("Figure 3. Placebo-date point estimates and 95% confidence intervals, with "
+      "the real 2025 shock plotted for reference. The placebo points cluster "
+      "around &minus;0.43, the same neighborhood as the real estimate.", caption),
 ]))
 
-# 4.4 Leave-one-industry-out
-story.append(P("4.4. Leave-one-industry-out", "H2"))
-lo_full  = pd.read_csv(f"{TABS}/leave_one_out_full.csv")
-lo_no232 = pd.read_csv(f"{TABS}/leave_one_out_no232.csv")
-n_lo_sig_full  = (lo_full["p"]  < 0.05).sum()
-n_lo_sig_no232 = (lo_no232["p"] < 0.05).sum()
-story.append(P("<b>Concern.</b> With 18 clusters, a single pivotal industry can "
-               "drive the aggregate estimate."))
-story.append(P(f"<b>What we did.</b> We dropped each industry in turn and re-"
-               f"estimated β. On the full sample β moves within "
-               f"[{lo_full['beta'].min():+.3f}, {lo_full['beta'].max():+.3f}]; "
-               f"{n_lo_sig_full}/18 drops yield p < 0.05. On the no-232 sample β "
-               f"stays inside [{lo_no232['beta'].min():+.3f}, "
-               f"{lo_no232['beta'].max():+.3f}] and {n_lo_sig_no232}/15 drops "
-               "remain significant. The no-232 result is therefore not driven by "
-               "any single industry, though a minority of drops tip the estimate "
-               "out of the 5%-significance range."))
+# 5.4 Leave-one-industry-out
+story.append(P("5.4. Leave-one-industry-out", h2))
+lo_full  = pd.read_csv(TABS/"leave_one_out_full.csv")
+lo_no232 = pd.read_csv(TABS/"leave_one_out_no232.csv")
+n_lo_full  = int((lo_full["p"]  < 0.05).sum())
+n_lo_no232 = int((lo_no232["p"] < 0.05).sum())
+story.append(P(f"With 18 clusters, a single pivotal industry can carry the "
+               f"aggregate. We drop each industry and refit. On the full sample "
+               f"&beta; moves within [{fmt(lo_full['beta'].min())}, "
+               f"{fmt(lo_full['beta'].max())}] and {n_lo_full} of 18 drops reach "
+               f"p &lt; 0.05. On the no-232 sample &beta; stays inside "
+               f"[{fmt(lo_no232['beta'].min())}, {fmt(lo_no232['beta'].max())}] "
+               f"and {n_lo_no232} of 15 drops keep 5%-significance. The no-232 "
+               "result is not driven by a single industry, but a minority of drops "
+               "push the estimate out of the 5% range."))
 
-# 4.5 Rotemberg
-story.append(P("4.5. Rotemberg weight decomposition (Goldsmith-Pinkham-Sorkin-Swift)", "H2"))
-rot = pd.read_csv(f"{TABS}/rotemberg_weights.csv").sort_values("alpha", ascending=False).reset_index(drop=True)
-top5 = rot["alpha"].head(5).sum()
-worst = rot.iloc[0]
-story.append(P("<b>Concern.</b> Goldsmith-Pinkham, Sorkin and Swift (2020) show "
-               "that a Bartik-style IV coefficient is a weighted average of "
-               "industry-specific just-identified IV estimates, with weights α_k "
-               "proportional to the squared covariance between each industry's "
-               "exposure share and the aggregate treatment. If the industries with "
-               "the largest α_k have β_k's of the wrong sign, the aggregate "
-               "estimate is fragile."))
-story.append(P("<b>What we did.</b> For each industry k we constructed the "
-               "industry-specific instrument z<sub>k,it</sub> = 1{i=k} · post<sub>t</sub>, "
-               "computed the just-identified β_k = cov(z_k, y) / cov(z_k, T), and the "
-               "Rotemberg weight α_k ∝ cov(z_k, T)<sup>2</sup>."))
-story.append(P(f"<b>Result.</b> The top five industries carry {100*top5:.1f}% of total "
-               f"Rotemberg weight. The single largest weight ({100*worst['alpha']:.1f}%) "
-               f"belongs to {worst['industry']}, whose industry-specific β_k is "
-               f"{worst['beta_k']:+.3f} -- <i>positive</i>, i.e. the opposite sign of "
-               "our headline. The aggregate negative β is therefore driven by the "
-               "next three industries (Petroleum/Coal, Textile Product Mills, Chemical), "
-               "which have large negative β_k. This is the textbook Goldsmith-"
-               "Pinkham warning: our estimate is a heterogeneous aggregation and "
-               "the largest-weight industry disagrees with it."))
-
+# 5.5 Rotemberg
+rot_top5 = H["rotemberg_top5_weight_share"]
+rot_top  = H["rotemberg_top"]
+story.append(P("5.5. Rotemberg weight decomposition", h2))
+story.append(P("Goldsmith-Pinkham, Sorkin, and Swift (2020) show that a Bartik-"
+               "style IV coefficient is a weighted average of industry-specific "
+               "just-identified IV estimates, with weights &alpha;<sub>k</sub> "
+               "proportional to squared cov(z<sub>k</sub>, T). If the high-weight "
+               "industries have &beta;<sub>k</sub> of the wrong sign, the "
+               "aggregate is fragile. We build an industry-specific instrument "
+               "z<sub>k,it</sub> = 1{i=k}&middot;post<sub>t</sub>, compute "
+               "&beta;<sub>k</sub> = cov(z<sub>k</sub>, y) / cov(z<sub>k</sub>, T), "
+               "and &alpha;<sub>k</sub> &prop; cov(z<sub>k</sub>, T)<sup>2</sup>."))
+story.append(P(f"The top five industries carry {100*rot_top5:.1f}% of total "
+               f"Rotemberg weight. The single largest weight "
+               f"({100*rot_top['alpha']:.1f}%) belongs to "
+               f"{rot_top['industry'].replace('_',' ')}, whose "
+               f"&beta;<sub>k</sub> is {fmt(rot_top['beta_k'], 3)}, the opposite "
+               "sign of the headline. The aggregate negative &beta; is driven by "
+               "the next three industries (Petroleum/Coal, Textile Product Mills, "
+               "Chemical), which have large negative &beta;<sub>k</sub>. This is "
+               "the textbook Goldsmith-Pinkham warning: the aggregate is a "
+               "heterogeneous mix and the largest-weight component disagrees with "
+               "it."))
 story.append(KeepTogether([
-    Image(f"{FIGS}/fig6_rotemberg.png", width=6.4*inch, height=3.0*inch),
-    P("<i>Figure 6. Rotemberg weights for the ten highest-weight industries. "
-      "Red bars mark industries with positive β_k (wrong sign relative to the "
-      "aggregate), blue bars mark negative β_k.</i>", "Caption")
+    Image(str(FIGS/"fig6_rotemberg.png"), width=6.2*inch, height=3.0*inch),
+    P("Figure 4. Rotemberg weights and industry-specific &beta;<sub>k</sub> for "
+      "the ten highest-weight industries. Bars above zero mark industries whose "
+      "industry-specific estimate is of the opposite sign to the aggregate.",
+      caption),
 ]))
 
-# 4.6 PPML
-story.append(P("4.6. Poisson PML (Santos Silva &amp; Tenreyro)", "H2"))
-story.append(P("<b>Concern.</b> Log-linear TWFE is equivalent to OLS only when errors "
-               "are symmetric and homoskedastic in logs. Employment is a count-like "
-               "positive variable, and Santos Silva and Tenreyro (2006) show that "
-               "Poisson PML is more robust to heteroskedasticity in multiplicative "
-               "models."))
-story.append(P(f"<b>What we did.</b> We refit the model with PPML "
-               f"(fepois in fixest), retaining industry and date fixed effects and "
-               f"clustered SEs."))
-story.append(P(f"<b>Result.</b> β<sup>PPML</sup><sub>full</sub> = "
-               f"{ppml_full['beta_ppml']:+.3f} (SE {ppml_full['se_ppml']:.3f}, p = "
-               f"{ppml_full['p_ppml']:.3f}); β<sup>PPML</sup><sub>no232</sub> = "
-               f"{ppml_no232['beta_ppml']:+.3f} (SE {ppml_no232['se_ppml']:.3f}, "
-               f"p = {ppml_no232['p_ppml']:.3f}). PPML shrinks the point estimate "
-               "substantially -- in the full sample by two-thirds, in the no-232 "
-               "sample by roughly 40% -- with p-values well above 0.10 in both "
-               "samples. This reinforces the view that the log-linear β is "
-               "capturing heteroskedastic leverage more than a true elasticity."))
+# 5.6 PPML
+story.append(P("5.6. Poisson PML", h2))
+story.append(P("A log-linear TWFE regression equals OLS on logs only if errors are "
+               "symmetric and homoskedastic in logs. Santos Silva and Tenreyro "
+               "(2006) argue that Poisson PML is more robust to heteroskedasticity "
+               "in multiplicative models. Refitting with <i>fepois</i> in the "
+               "<i>fixest</i> package, retaining industry and date fixed effects "
+               "and clustered SEs, the full-sample PPML coefficient is "
+               f"{fmt(ppml_full['beta_ppml'])} (SE {fmt(ppml_full['se_ppml'])}, "
+               f"p = {fmt(ppml_full['p_ppml'])}); no-232 PPML is "
+               f"{fmt(ppml_no232['beta_ppml'])} "
+               f"(SE {fmt(ppml_no232['se_ppml'])}, "
+               f"p = {fmt(ppml_no232['p_ppml'])}). PPML shrinks the point estimate "
+               "to non-significance in both samples, which points to the log-linear "
+               "&beta; picking up heteroskedastic leverage more than a true "
+               "elasticity."))
 
-# 4.7 Ibragimov-Mueller
-story.append(P("4.7. Cross-industry aggregation: IBI slope and Ibragimov-Müller t-test", "H2"))
-ibi_slope = H["ibi_slope"]; im = H["ibragimov_muller_one_sample_t"]
-story.append(P("<b>Concern.</b> With 18 industries, panel-based SEs still impose "
-               "asymptotic structure. A simple cross-industry regression and an "
-               "Ibragimov-Müller (IM) one-sample t-test on the 18 industry-specific "
-               "β̂<sub>i</sub>'s give second opinions that do not require large G."))
-story.append(P(f"<b>Result.</b> The cross-industry OLS slope of (post-mean - "
-               f"pre-mean) log employment on tariff shock is "
-               f"{ibi_slope['slope']:+.3f} (SE {ibi_slope['se']:.3f}, p = "
-               f"{ibi_slope['p']:.3f}); the IM one-sample t on the 18 β̂<sub>i</sub>'s "
-               f"gives t = {im['t']:+.3f}, p = {im['p']:.3f}. Both point to "
-               "borderline evidence at the 10% level, but neither reaches 5%."))
+# 5.7 IBI + IM
+ibi = H["ibi_slope"]
+im  = H["ibragimov_muller_one_sample_t"]
+story.append(P("5.7. Cross-industry slope and Ibragimov-M&uuml;ller t-test", h2))
+story.append(P("Panel-based SEs still impose asymptotic structure. Two cross-"
+               "sectional alternatives give second opinions that do not lean on "
+               "large G. The cross-industry OLS slope of (post-mean minus pre-mean) "
+               f"log employment on the tariff shock is {fmt(ibi['slope'])} "
+               f"(SE {fmt(ibi['se'])}, p = {fmt(ibi['p'])}). The Ibragimov-"
+               f"M&uuml;ller one-sample t on the 18 industry-specific "
+               f"&beta;<sub>i</sub>'s gives t = {fmt(im['t'])}, "
+               f"p = {fmt(im['p'])}. Both sit on the 10% boundary but neither "
+               "reaches 5%."))
 
-# 4.8 Functional form
-story.append(P("4.8. Functional form: quadratic and terciles", "H2"))
-q = H["quadratic"]; t = H["tercile"]
-story.append(P("<b>Concern.</b> A linear β imposes that the tariff-employment "
-               "relationship is linear in shock intensity and monotonic. "
-               "De Chaisemartin and D'Haultfœuille (2020) warn that TWFE with a "
-               "heterogeneous continuous treatment can be badly misleading if this "
-               "assumption fails."))
-story.append(P(f"<b>What we did.</b> We added a quadratic term (treat<sub>i</sub> · "
-               f"post<sub>t</sub>)<sup>2</sup>, and separately replaced the continuous "
-               f"treatment with tercile-by-post dummies (low/mid/high tariff shock). "
-               f"Quadratic fit: β<sub>lin</sub> = {q['beta_lin']:+.2f} (SE "
-               f"{q['se_lin']:.2f}), β<sub>quad</sub> = {q['beta_quad']:+.2f} (SE "
-               f"{q['se_quad']:.2f}). Tercile fit: high-shock × post = "
-               f"{t['beta_high']:+.3f} (SE {t['se_high']:.3f}); mid-shock × post = "
-               f"{t['beta_mid']:+.3f} (SE {t['se_mid']:.3f}).") )
-story.append(P("<b>Result.</b> Neither the quadratic nor the tercile dummies are "
-               "individually significant. The tercile specification is particularly "
-               "revealing: the high-shock industries show only a tiny (and "
-               "insignificant) additional decline relative to the low-shock baseline. "
+# 5.8 Functional form
+q = H["quadratic"]
+tr = H["tercile"]
+story.append(P("5.8. Functional form", h2))
+story.append(P("A linear &beta; imposes that the tariff-employment relationship is "
+               "linear in shock intensity and monotone. de Chaisemartin and "
+               "D'Haultf&oelig;uille (2020) warn that TWFE with a heterogeneous "
+               "continuous treatment can mislead if that assumption fails. We add "
+               "a quadratic term (treat<sub>i</sub>&middot;post<sub>t</sub>)"
+               "<sup>2</sup>, and separately replace the continuous treatment with "
+               "tercile-by-post dummies. The quadratic fit returns "
+               f"&beta;<sub>lin</sub> = {fmt(q['beta_lin'],2)} "
+               f"(SE {fmt(q['se_lin'],2)}), "
+               f"&beta;<sub>quad</sub> = {fmt(q['beta_quad'],2)} "
+               f"(SE {fmt(q['se_quad'],2)}), neither individually significant. The "
+               f"tercile fit returns high-shock &times; post = "
+               f"{fmt(tr['beta_high'])} (SE {fmt(tr['se_high'])}) and mid-shock "
+               f"&times; post = {fmt(tr['beta_mid'])} (SE {fmt(tr['se_mid'])}). "
                "There is no clear monotone dose-response."))
 
-# 4.9 Exposure-robust lower-bound SE
-story.append(P("4.9. HC1 robust SE as a Borusyak-Hull-Jaravel lower bound", "H2"))
-hf = H["hc1_full"]; hn = H["hc1_no232"]
-story.append(P("<b>Concern.</b> Borusyak-Hull-Jaravel (2022) argue that with "
-               "shift-share exposure the \"correct\" SE accounts for "
-               "cross-industry correlation in the shock. An HC1 heteroskedasticity-"
-               "robust SE is a conservative <i>lower bound</i> on the appropriate "
-               "exposure-robust SE."))
-story.append(P(f"<b>Result.</b> HC1 SE<sub>full</sub> = {hf['se_hc1']:.3f} (vs. "
-               f"clustered {full['se']:.3f}); HC1 SE<sub>no232</sub> = "
-               f"{hn['se_hc1']:.3f} (vs. clustered {no232['se']:.3f}). The HC1 SE "
-               "is much smaller than the clustered SE, implying the clustered SE "
-               "already imposes substantial skepticism. The exposure-robust SE sits "
-               "between the two, so we treat the clustered-SE inference as "
-               "conservative and consistent with the WCB and RI p-values above."))
+# 5.9 HC1 lower bound
+hf = H["hc1_full"]
+hn = H["hc1_no232"]
+story.append(P("5.9. HC1 robust SE as an exposure-robust lower bound", h2))
+story.append(P("Borusyak, Hull, and Jaravel (2022) argue that with shift-share "
+               "exposure the appropriate SE accounts for cross-industry correlation "
+               "in the shock. An HC1 heteroskedasticity-robust SE is a "
+               "conservative lower bound on that exposure-robust SE. "
+               f"HC1 SE<sub>full</sub> = {fmt(hf['se_hc1'])} (versus clustered "
+               f"{fmt(full['se'])}); HC1 SE<sub>no232</sub> = {fmt(hn['se_hc1'])} "
+               f"(versus clustered {fmt(no232['se'])}). The HC1 SE is much smaller "
+               "than the clustered SE, so the exposure-robust SE lies between them "
+               "and the clustered-SE inference is already on the conservative side, "
+               "which agrees with the WCB and RI results above."))
 
-# 4.10 Laspeyres
-story.append(P("4.10. Laspeyres pre-period-basket tariff exposure", "H2"))
-story.append(P("<b>Concern.</b> If the basket of goods inside an industry shifts "
-               "after tariffs bite (e.g. importers substitute away from high-duty "
-               "HTS codes), the post-period effective tariff rate used to compute "
-               "the shock is partly endogenous. A Laspeyres-style measure using the "
-               "pre-period basket weights would be immune to this bias."))
-story.append(P("<b>What we did.</b> We verified that our baseline_tariff variable "
-               "is already constructed from the January-2025 (pre-shock) basket "
-               "and the shock is ΔT_i = T_i^{post} - T_i^{pre}. "
-               "Refitting with this Laspeyres-equivalent shock reproduces the "
-               "baseline exactly, as expected -- a useful sanity check that our "
-               "treatment is already bias-free in this dimension."))
+# 5.10 Laspeyres
+story.append(P("5.10. Laspeyres pre-period-basket tariff", h2))
+story.append(P("If the basket of goods inside an industry shifts after tariffs "
+               "bite, for example importers substituting away from high-duty HTS "
+               "codes, the post-period effective tariff rate is partly endogenous. "
+               "A Laspeyres-style measure using pre-period basket weights is "
+               "immune. The baseline tariff variable is already built from the "
+               "January 2025 pre-shock basket, and the shock is "
+               "&Delta;T<sub>i</sub> = T<sub>i</sub><sup>post</sup> &minus; "
+               "T<sub>i</sub><sup>pre</sup>. Refitting with this Laspeyres-"
+               "equivalent shock reproduces the baseline exactly, a useful sanity "
+               "check that the treatment is bias-free in this dimension."))
 
-# --- Summary table for robustness
-story.append(P("4.11. Putting it all together", "H2"))
-rob = pd.read_csv(f"{TABS}/robustness_summary.csv")
-story.append(table_from_df(rob.round(3), col_widths=[2.9*inch, 0.7*inch, 0.7*inch, 0.7*inch],
-                           small=True))
-story.append(P("<i>Table 2. Hardened inference results -- all 19 rows in one place. "
-               "Numbers in parentheses are 95% randomization-inference quantiles "
-               "for context.</i>", "Caption"))
+# 5.11 Summary
+story.append(P("5.11. Putting it together", h2))
+summary_rows = [
+    ("Baseline DiD, full",              full["beta"],          full["se"],           full["p_t"]),
+    ("Baseline DiD, no Sec. 232",       no232["beta"],         no232["se"],          no232["p_t"]),
+    ("Wild cluster bootstrap, full",    full["beta"],          full["se"],           wf["p_wcb"]),
+    ("Wild cluster bootstrap, no 232",  no232["beta"],         no232["se"],          wn["p_wcb"]),
+    ("Fisher randomization, full",      rf["obs_beta"],        rf["null_sd"],        rf["p_ri"]),
+    ("Fisher randomization, no 232",    rn["obs_beta"],        rn["null_sd"],        rn["p_ri"]),
+    ("Poisson PML, full",               ppml_full["beta_ppml"], ppml_full["se_ppml"], ppml_full["p_ppml"]),
+    ("Poisson PML, no 232",             ppml_no232["beta_ppml"], ppml_no232["se_ppml"], ppml_no232["p_ppml"]),
+    ("HC1 (lower-bound) SE, full",      hf["beta"],            hf["se_hc1"],         ""),
+    ("HC1 (lower-bound) SE, no 232",    hn["beta"],            hn["se_hc1"],         ""),
+    ("Cross-industry slope",            ibi["slope"],          ibi["se"],            ibi["p"]),
+    ("Ibragimov-M\u00fcller t",         im["t"],               "",                   im["p"]),
+]
+rob_df = pd.DataFrame([
+    (r[0], fmt(r[1]), fmt(r[2]) if r[2] != "" else "", fmt(r[3]) if r[3] != "" else "")
+    for r in summary_rows
+], columns=["Specification", "Coef.", "SE", "p"])
+story.append(KeepTogether([
+    table(rob_df, col_widths=[3.0*inch, 0.9*inch, 0.9*inch, 0.9*inch]),
+    P("Table 3. Robustness summary. Cluster-robust SEs where applicable. Wild "
+      "cluster bootstrap uses Rademacher weights with B = 1,999. Fisher "
+      "randomization uses P = 999 permutations of the industry tariff-shock "
+      "vector. HC1 SEs are a Borusyak-Hull-Jaravel lower bound on the exposure-"
+      "robust SE.", caption),
+]))
 
-# --------------------------------------------------------------------------
-# 5. Discussion
-# --------------------------------------------------------------------------
+# --- 6. Discussion --------------------------------------------------------
 story.append(PageBreak())
-story.append(P("5. Discussion", "H1"))
-story.append(P("Stepping back, the picture that emerges after hardening is as "
-               "follows. The full-sample point estimate is small and statistically "
-               "indistinguishable from zero under every inference procedure we "
-               "tried: clustered t, wild cluster bootstrap, Fisher randomization, "
-               "PPML, Ibragimov-Müller. The no-Sec-232 sample point estimate is "
-               "larger and survives clustered-t and the wild cluster bootstrap at "
-               "the 10% level, but not at 5%, and does not survive Fisher "
-               "randomization. Placebo-date tests reveal a pre-existing differential "
-               "trend of roughly the same magnitude as the real estimate, implying "
-               "that an honest reader should subtract most of the point estimate off "
-               "the top. Finally, Rotemberg decomposition shows that our aggregate "
-               "β is not even sign-consistent across the industries with the largest "
-               "weights."))
-story.append(P("Three points deserve emphasis. First, the original significant "
-               "result was real in the sense that clustered-t p = 0.046 in the "
-               "no-232 sample -- but the procedure's nominal size is not the same "
-               "as its actual size with G = 18. Second, the robust conclusion is "
-               "not that tariffs had no effect; rather, fourteen months is too "
-               "short a post-window and 18 clusters too small a sample to detect "
-               "the effect even if it is of the order the no-232 point estimate "
-               "suggests (-10% to a ten-point tariff increase). Third, the study "
-               "documents a useful methodological workflow: report the naive "
-               "estimate, then force the data to defend itself against every major "
-               "criticism a modern applied econometrician would raise."))
+story.append(P("6. Discussion", h1))
 
-story.append(P("6. Conclusion", "H1"))
-story.append(P("Using eighteen 3-digit NAICS manufacturing sub-sectors and USITC-"
-               "calculated industry-level effective tariff rates, we estimate the "
-               "employment effect of the February 2025 tariff package over its "
-               "first fourteen post-months. Cluster-t inference returns a significant "
-               "negative effect in the sub-sample that excludes Section-232-shielded "
-               "industries. A comprehensive statistical hardening pass -- wild "
-               "cluster bootstrap, Fisher randomization, leave-one-out, placebo "
-               "dates, Rotemberg decomposition, PPML, Ibragimov-Müller, quadratic "
-               "and tercile functional-form checks, and Borusyak-Hull-Jaravel "
-               "bounds -- substantially weakens this finding. Our honest conclusion "
-               "is that the 2025 tariffs' first-year employment footprint, as "
-               "identified by this design and this data window, is small, noisy, "
-               "and not robustly distinguishable from zero. The paper's larger "
-               "contribution is methodological: a replicable workflow for stress-"
-               "testing a TWFE DiD with a continuous shift-share treatment and few "
-               "clusters."))
+story.append(P("Stepping back, the picture after hardening is the following. The "
+               "full-sample point estimate is small and statistically "
+               "indistinguishable from zero under every procedure tried, clustered "
+               "t through Ibragimov-M&uuml;ller. The no-Section-232 sub-sample "
+               "survives clustered t and the wild cluster bootstrap at 10% but not "
+               "5%, and it does not survive Fisher randomization. Placebo-date "
+               "tests return a pre-existing differential trend of roughly the same "
+               "size as the real estimate, so a reader who takes the placebo "
+               "seriously subtracts most of the coefficient off the top. Rotemberg "
+               "decomposition shows the aggregate &beta; is not sign-consistent "
+               "across the industries carrying the largest weights."))
 
-# References / data
-story.append(P("Data and code", "H2"))
-story.append(P("All code is at <a href='https://github.com/ash-grossman/ECO4370-Project'>"
-               "github.com/ash-grossman/ECO4370-Project</a>. The reproducibility script "
-               "<tt>run_all.R</tt> executes data ingestion, baseline DiD, 2SLS, the "
-               "full robustness suite (<tt>src/robustness.R</tt>), and figures. "
-               "Python companion scripts under <tt>outputs/work/</tt> produce the "
-               "same hardening results independently. "
-               "Employment data come from the FRED CES tables (series "
-               "CES3231100001-CES3133700001); tariff data come from USITC DataWeb's "
-               "Calculated Duties and Customs Value fields, aggregated from HTS-8 "
-               "to NAICS-3 via the U.S. Census Bureau concordance. An <tt>.Renviron</tt> "
-               "file with a free FRED API key is required to re-ingest employment "
-               "data and is excluded from the git repository."))
+story.append(P("Three points deserve emphasis. First, the baseline significant "
+               "result was real in the narrow sense that clustered-t p = 0.046 in "
+               "the no-232 sample. The procedure's nominal size, however, is not "
+               "the same as its actual size at G = 18. Second, the robust "
+               "conclusion is not that tariffs had no effect. Fourteen months is a "
+               "short post-window and 18 clusters a small sample, and the data "
+               "cannot detect an effect of the size the no-232 point estimate "
+               "suggests (a 10% contraction per ten-point tariff increase) with "
+               "any reasonable power. Third, the design documents a useful "
+               "workflow: report the naive estimate, then force the data to defend "
+               "itself against every major criticism a modern applied "
+               "econometrician would raise."))
 
-story.append(P("Selected references", "H2"))
-story.append(P("Cameron, A. C., Gelbach, J. B., &amp; Miller, D. L. (2008). "
-               "Bootstrap-based improvements for inference with clustered errors. "
-               "<i>Review of Economics and Statistics</i>, 90(3), 414-427."))
-story.append(P("Goldsmith-Pinkham, P., Sorkin, I., &amp; Swift, H. (2020). "
-               "Bartik instruments: What, when, why, and how. "
-               "<i>American Economic Review</i>, 110(8), 2586-2624."))
-story.append(P("Borusyak, K., Hull, P., &amp; Jaravel, X. (2022). "
-               "Quasi-experimental shift-share research designs. "
-               "<i>Review of Economic Studies</i>, 89(1), 181-213."))
-story.append(P("Ibragimov, R., &amp; Müller, U. K. (2010). t-statistic based "
-               "correlation and heterogeneity robust inference. "
-               "<i>Journal of Business &amp; Economic Statistics</i>, 28(4), 453-468."))
-story.append(P("Santos Silva, J. M. C., &amp; Tenreyro, S. (2006). The log of "
-               "gravity. <i>Review of Economics and Statistics</i>, 88(4), 641-658."))
-story.append(P("de Chaisemartin, C., &amp; D'Haultfœuille, X. (2020). Two-way "
-               "fixed-effects estimators with heterogeneous treatment effects. "
-               "<i>American Economic Review</i>, 110(9), 2964-2996."))
+# --- 7. Conclusion --------------------------------------------------------
+story.append(P("7. Conclusion", h1))
 
+story.append(P("The February 2025 tariff package dropped a sharp, pre-announced, "
+               "cross-industry shock on U.S. manufacturers. On paper the TWFE DiD "
+               "returns a negative coefficient in the no-232 sub-sample that is "
+               "significant under a cluster-robust t-test. Under a wider inference "
+               "menu (wild cluster bootstrap, Fisher randomization, leave-one-"
+               "industry-out, placebo dates, Rotemberg decomposition, PPML, "
+               "Ibragimov-M&uuml;ller, HC1 bounds, and quadratic and tercile "
+               "functional-form checks) most of that significance evaporates. The "
+               "first-year employment footprint identified by this design and this "
+               "data window is small, noisy, and not robustly distinguishable "
+               "from zero. The paper's methodological contribution is a "
+               "replicable workflow for stress-testing a TWFE DiD with a "
+               "continuous shift-share treatment and few clusters."))
+
+# --- Data availability ----------------------------------------------------
+story.append(P("Data and Code", h1))
+story.append(P("All code is at github.com/ash-grossman/ECO4370-Project. "
+               "The reproducibility script <i>run_all.R</i> executes data "
+               "ingestion, baseline DiD, 2SLS, the full robustness suite "
+               "(<i>src/robustness.R</i>), and figures. A Python companion at "
+               "<i>scripts/hardening_fast.py</i> reproduces the robustness "
+               "results independently. Employment data come from FRED CES "
+               "(series CES3231100001 through CES3133700001). Tariff data come "
+               "from USITC DataWeb (Calculated Duties and Customs Value), "
+               "aggregated from HTS-8 to NAICS-3 through the U.S. Census Bureau "
+               "concordance. A <i>.Renviron</i> file with a free FRED API key is "
+               "required to re-ingest employment data and is excluded from the "
+               "git repository."))
+
+# --- References -----------------------------------------------------------
+story.append(P("References", h1))
+refs = [
+    "Borusyak, K., Hull, P., and Jaravel, X. (2022). Quasi-experimental shift-share "
+    "research designs. <i>Review of Economic Studies</i>, 89(1), 181-213.",
+    "Cameron, A. C., Gelbach, J. B., and Miller, D. L. (2008). Bootstrap-based "
+    "improvements for inference with clustered errors. <i>Review of Economics "
+    "and Statistics</i>, 90(3), 414-427.",
+    "de Chaisemartin, C., and D'Haultf&oelig;uille, X. (2020). Two-way fixed-"
+    "effects estimators with heterogeneous treatment effects. "
+    "<i>American Economic Review</i>, 110(9), 2964-2996.",
+    "Goldsmith-Pinkham, P., Sorkin, I., and Swift, H. (2020). Bartik instruments: "
+    "What, when, why, and how. <i>American Economic Review</i>, 110(8), 2586-2624.",
+    "Ibragimov, R., and Müller, U. K. (2010). t-statistic based correlation and "
+    "heterogeneity robust inference. <i>Journal of Business and Economic "
+    "Statistics</i>, 28(4), 453-468.",
+    "Santos Silva, J. M. C., and Tenreyro, S. (2006). The log of gravity. "
+    "<i>Review of Economics and Statistics</i>, 88(4), 641-658.",
+]
+for r in refs:
+    story.append(P(r, ref))
+
+# --- Build ----------------------------------------------------------------
 doc.build(story)
-print('Wrote', OUT_DIR / 'ECO4370_Final_Report.pdf')
+print(f"Wrote {out_pdf}")
