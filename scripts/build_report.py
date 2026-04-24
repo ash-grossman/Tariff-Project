@@ -131,7 +131,7 @@ def table(df, col_widths=None, body_size=10, header=True):
     return t
 
 # ---- build document ----------------------------------------------------
-out_pdf = str(OUT_DIR / "ECO4370_Final_Report.pdf")
+out_pdf = str(OUT_DIR / "Final_Report.pdf")
 doc = SimpleDocTemplate(
     out_pdf, pagesize=LETTER,
     leftMargin=1.0*inch, rightMargin=1.0*inch,
@@ -145,7 +145,6 @@ story = []
 story.append(P("Do Tariffs Kill Manufacturing Jobs?<br/>"
                "Evidence from the 2025 U.S. Tariff Shock", title))
 story.append(P("Asher Grossman", author))
-story.append(P("Southern Methodist University, ECO 4370", author))
 story.append(P("April 2026", author))
 story.append(Spacer(1, 18))
 
