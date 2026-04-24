@@ -1,4 +1,4 @@
-# ECO 4370 - Do Tariffs Kill Manufacturing Jobs? (2025 Evidence)
+## Do Tariffs Kill Manufacturing Jobs? (2025 Evidence)
 
 A short empirical paper estimating the employment effects of the February 2025
 U.S. tariff shock on 18 3-digit NAICS manufacturing sub-sectors, using a
@@ -23,7 +23,7 @@ because it is ~22 MB; re-download from https://dataweb.usitc.gov).
 ## Repo structure
 
 ```
-ECO4370-Project/
+Tariff-Project/
   .Renviron                      # FRED_API_KEY=<your key>  (not committed)
   .gitignore
   README.md
@@ -58,7 +58,7 @@ ECO4370-Project/
       event_study_coefs.csv
       industry_summary.csv
   report/
-    ECO4370_Final_Report.pdf     # publishable writeup
+    Final_Report.pdf     # publishable writeup
 ```
 
 ## Reproducibility
