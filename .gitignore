@@ -1,0 +1,9 @@
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+.Renviron
+*.Rproj.user
+resources/raw/monthly_customs_duties_2025.xlsx
+.DS_Store
+__pycache__/

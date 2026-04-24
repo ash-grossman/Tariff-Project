@@ -1,0 +1,8 @@
+,"(1) Full Sample, DiD","(2) Full Sample, 2SLS","(3) Drop Sec. 232, DiD","(4) Drop Sec. 232, 2SLS"
+Tariff Shock × Post,-0.494,-1.830+,-1.044*,-1.702*
+,(0.438),(0.976),(0.479),(0.821)
+Industry FE,Yes,Yes,Yes,Yes
+Month FE,Yes,Yes,Yes,Yes
+First-stage F,—,6.77,—,11.34
+Observations,"2,430","2,430","2,025","2,025"
+Industries,18,18,15,15
