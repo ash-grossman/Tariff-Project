@@ -1,4 +1,4 @@
-Do Tariffs Kill Manufacturing Jobs? (2025 Evidence)
+#Do Tariffs Kill Manufacturing Jobs? (2025 Evidence)
 
 A short empirical paper estimating the employment effects of the February 2025
 U.S. tariff shock on 18 3-digit NAICS manufacturing sub-sectors, using a
