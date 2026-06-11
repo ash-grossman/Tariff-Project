@@ -1,3 +1,6 @@
+>[!NOTE]
+>Read final report at Tariff-Project/report/Tariff Report.pdf
+
 ## Do Tariffs Kill Manufacturing Jobs? (2025 Evidence)
 
 A short empirical paper estimating the employment effects of the February 2025
